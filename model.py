@@ -185,6 +185,8 @@ def main():
     df_train, df_test = get_data_split(
         raw_data, k_shot=args.k_shot, class_map=class_map
     )
+    df_test_raw = df_test # as a copy for output 
+
     printls(f"{df_train.shape=}, {df_test.shape=}")
 
     # Convert data to openpromopt InputExample type
@@ -233,8 +235,32 @@ def main():
         all_labels.extend(labels.cpu().tolist())
         all_preds.extend(torch.argmax(logits, dim=-1).cpu().tolist())
 
-    acc = sum([int(i == j) for i, j in zip(all_preds, all_labels)]) / len(all_labels)
-    print(acc)
+    val_accuracy = sum([int(i == j) for i, j in zip(all_preds, all_labels)]) / len(
+        all_labels
+    )
+    print(val_accuracy)
+
+    # Output test accuracy and labels
+    # file naming would be [dataset]_[k_shot]_[epoch].parquet
+    label_output_path = os.path.join(
+        ROOT, "output", f"{args.dataset}_{args.k_shot}_{args.epoch}.parquet"
+    )
+    accuracy_output_path = os.path.join(
+        ROOT, "output", f"{args.dataset}_{args.k_shot}_{args.epoch}_accuracy.txt"
+    )
+    with open(accuracy_output_path, "w") as f:
+        f.write(str(val_accuracy))
+
+    output = pd.concat(
+        [
+            df_test_raw.reset_index(drop=True),
+            pd.Series(all_labels, name="label_"),
+            pd.Series(all_preds, name="pred"),
+        ],
+        axis=1,
+        join="outer",
+    )
+    output.to_parquet(label_output_path)
 
 
 if __name__ == "__main__":
