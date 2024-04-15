@@ -4,7 +4,7 @@ from datasets import load_from_disk
 from common_utils import printls
 from openprompt.data_utils import InputExample
 from openprompt.plms import load_plm
-from openprompt.prompts import ManualTemplate, ManualVerbalizer
+from openprompt.prompts import ManualTemplate, ManualVerbalizer, SoftVerbalizer
 from openprompt import PromptForClassification, PromptDataLoader
 from transformers import AdamW, get_linear_schedule_with_warmup
 import torch
@@ -24,6 +24,10 @@ def load_args_setup():
 
     parser.add_argument("--k-shot", type=int, default=2)
     parser.add_argument("--epoch", type=int, default=3)
+
+    parser.add_argument(
+        "--verbalizer", type=str, default="manual", choices=["manual", "soft"]
+    )
 
     return parser.parse_args()
 
@@ -82,7 +86,7 @@ def get_manual_template(name: str, tokenizer) -> ManualTemplate:
         )
 
 
-def get_verbalizer(name: str, classes: list, tokenizer) -> ManualVerbalizer:
+def get_manual_verbalizer(name: str, classes: list, tokenizer) -> ManualVerbalizer:
     """Return the verbalizer for the given dataset name."""
     if name == "twitter-financial-news-topic":
         return ManualVerbalizer(
@@ -113,6 +117,15 @@ def get_verbalizer(name: str, classes: list, tokenizer) -> ManualVerbalizer:
         )
 
 
+def get_soft_verbalizer(classes: list, tokenizer, plm) -> SoftVerbalizer:
+    """Return the soft verbalizer for the given dataset name."""
+    return SoftVerbalizer(
+        tokenizer,
+        plm,
+        classes=classes,
+    )
+
+
 def get_dataloader(df, template, tokenizer, WrapperClass):
     return PromptDataLoader(
         dataset=df,
@@ -129,7 +142,7 @@ def get_dataloader(df, template, tokenizer, WrapperClass):
     )
 
 
-def model_training(prompt_model, args, train_dataloader):
+def manual_verb_model_training(prompt_model, args, train_dataloader):
     # Training
     loss_function = torch.nn.CrossEntropyLoss()
     no_decay = ["bias", "LayerNorm.weight"]
@@ -171,6 +184,56 @@ def model_training(prompt_model, args, train_dataloader):
     return prompt_model
 
 
+def soft_verb_model_training(prompt_model, args, train_dataloader):
+    # Training
+    loss_func = torch.nn.CrossEntropyLoss()
+
+    no_decay = ["bias", "LayerNorm.weight"]
+
+    optimizer_grouped_parameters1 = [
+        {
+            "params": [
+                p
+                for n, p in prompt_model.plm.named_parameters()
+                if not any(nd in n for nd in no_decay)
+            ],
+            "weight_decay": 0.01,
+        },
+        {
+            "params": [
+                p
+                for n, p in prompt_model.plm.named_parameters()
+                if any(nd in n for nd in no_decay)
+            ],
+            "weight_decay": 0.0,
+        },
+    ]
+
+    optimizer_grouped_parameters2 = [
+        {"params": prompt_model.verbalizer.group_parameters_1, "lr": 3e-5},
+        {"params": prompt_model.verbalizer.group_parameters_2, "lr": 3e-4},
+    ]
+
+    optimizer1 = AdamW(optimizer_grouped_parameters1, lr=3e-5)
+    optimizer2 = AdamW(optimizer_grouped_parameters2)
+
+    for epoch in range(args.epoch):
+        tot_loss = 0
+        for step, inputs in enumerate(train_dataloader):
+            if torch.cuda.is_available():
+                inputs = inputs.cuda()
+            logits = prompt_model(inputs)
+            labels = inputs["label"]
+            loss = loss_func(logits, labels)
+            loss.backward()
+            tot_loss += loss.item()
+            optimizer1.step()
+            optimizer1.zero_grad()
+            optimizer2.step()
+            optimizer2.zero_grad()
+            print(tot_loss / (step + 1))
+    return prompt_model
+
 def main():
     args = load_args_setup()
     global ROOT
@@ -185,7 +248,8 @@ def main():
     df_train, df_test = get_data_split(
         raw_data, k_shot=args.k_shot, class_map=class_map
     )
-    df_test_raw = df_test # as a copy for output 
+    df_test = df_test.sample(frac=0.01)
+    df_test_raw = df_test  # as a copy for output
 
     printls(f"{df_train.shape=}, {df_test.shape=}")
 
@@ -200,28 +264,35 @@ def main():
     # Load PLM, template and verbalizer
     plm, tokenizer, model_config, WrapperClass = load_plm("bert", "bert-base-uncased")
 
-    manaul_template = get_manual_template(args.dataset, tokenizer)
-    manual_verbalizer = get_verbalizer(args.dataset, class_map.values(), tokenizer)
-
+    manual_template = get_manual_template(args.dataset, tokenizer)
     # Data loader
     train_dataloader = get_dataloader(
-        df_train, manaul_template, tokenizer, WrapperClass
+        df_train, manual_template, tokenizer, WrapperClass
     )
 
+    # Load verbalizer
+    if args.verbalizer == "manual":
+        verbalizer = get_manual_verbalizer(args.dataset, class_map.values(), tokenizer)
+    elif args.verbalizer == "soft":
+        verbalizer = get_soft_verbalizer(class_map.values(), tokenizer, plm)
+
     prompt_model = PromptForClassification(
-        template=manaul_template,
+        template=manual_template,
         plm=plm,
-        verbalizer=manual_verbalizer,
+        verbalizer=verbalizer,
         freeze_plm=False,
     )
     if torch.cuda.is_available():
         prompt_model = prompt_model.cuda()
 
-    prompt_model = model_training(prompt_model, args, train_dataloader)
+    if args.verbalizer == "verbalizer":
+        prompt_model = manual_verb_model_training(prompt_model, args, train_dataloader)
+    elif args.verbalizer == "soft":
+        prompt_model = soft_verb_model_training(prompt_model, args, train_dataloader)
 
     # Evaluate model result
     validation_dataloader = get_dataloader(
-        df_test, manaul_template, tokenizer, WrapperClass
+        df_test, manual_template, tokenizer, WrapperClass
     )
 
     all_preds = []
@@ -243,10 +314,14 @@ def main():
     # Output test accuracy and labels
     # file naming would be [dataset]_[k_shot]_[epoch].parquet
     label_output_path = os.path.join(
-        ROOT, "output", f"{args.dataset}_{args.k_shot}_{args.epoch}.parquet"
+        ROOT,
+        "output",
+        f"{args.verbalizer}_{args.dataset}_{args.k_shot}_{args.epoch}.parquet",
     )
     accuracy_output_path = os.path.join(
-        ROOT, "output", f"{args.dataset}_{args.k_shot}_{args.epoch}_accuracy.txt"
+        ROOT,
+        "output",
+        f"{args.verbalizer}_{args.dataset}_{args.k_shot}_{args.epoch}_accuracy.txt",
     )
     with open(accuracy_output_path, "w") as f:
         f.write(str(val_accuracy))
