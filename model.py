@@ -4,7 +4,12 @@ from datasets import load_from_disk
 from common_utils import printls
 from openprompt.data_utils import InputExample
 from openprompt.plms import load_plm
-from openprompt.prompts import ManualTemplate, ManualVerbalizer, SoftVerbalizer
+from openprompt.prompts import (
+    ManualTemplate,
+    ManualVerbalizer,
+    SoftVerbalizer,
+    AutomaticVerbalizer,
+)
 from openprompt import PromptForClassification, PromptDataLoader
 from transformers import AdamW, get_linear_schedule_with_warmup
 import torch
@@ -26,7 +31,7 @@ def load_args_setup():
     parser.add_argument("--epoch", type=int, default=3)
 
     parser.add_argument(
-        "--verbalizer", type=str, default="manual", choices=["manual", "soft"]
+        "--verbalizer", type=str, default="manual", choices=["manual", "soft", "avs"]
     )
 
     return parser.parse_args()
@@ -120,8 +125,17 @@ def get_manual_verbalizer(name: str, classes: list, tokenizer) -> ManualVerbaliz
 def get_soft_verbalizer(classes: list, tokenizer, plm) -> SoftVerbalizer:
     """Return the soft verbalizer for the given dataset name."""
     return SoftVerbalizer(
-        tokenizer,
-        plm,
+        tokenizer=tokenizer,
+        model=plm,
+        classes=classes,
+    )
+
+
+def get_avs_verbalizer(classes: list, tokenizer, plm) -> AutomaticVerbalizer:
+    """Return the avs for the given dataset name."""
+    return AutomaticVerbalizer(
+        tokenizer=tokenizer,
+        model=plm,
         classes=classes,
     )
 
@@ -234,6 +248,50 @@ def soft_verb_model_training(prompt_model, args, train_dataloader):
             print(tot_loss / (step + 1))
     return prompt_model
 
+
+def avs_verb_model_training(prompt_model, args, train_dataloader):
+    # Training
+    loss_func = torch.nn.CrossEntropyLoss()
+
+    no_decay = ["bias", "LayerNorm.weight"]
+
+    optimizer_grouped_parameters1 = [
+        {
+            "params": [
+                p
+                for n, p in prompt_model.plm.named_parameters()
+                if not any(nd in n for nd in no_decay)
+            ],
+            "weight_decay": 0.01,
+        },
+        {
+            "params": [
+                p
+                for n, p in prompt_model.plm.named_parameters()
+                if any(nd in n for nd in no_decay)
+            ],
+            "weight_decay": 0.0,
+        },
+    ]
+
+    optimizer1 = AdamW(optimizer_grouped_parameters1, lr=3e-5)
+
+    for epoch in range(args.epoch):
+        tot_loss = 0
+        for step, inputs in enumerate(train_dataloader):
+            if torch.cuda.is_available():
+                inputs = inputs.cuda()
+            logits = prompt_model(inputs)
+            labels = inputs["label"]
+            loss = loss_func(logits, labels)
+            loss.backward()
+            tot_loss += loss.item()
+            optimizer1.step()
+            optimizer1.zero_grad()
+            print(tot_loss / (step + 1))
+    return prompt_model
+
+
 def main():
     args = load_args_setup()
     global ROOT
@@ -275,6 +333,8 @@ def main():
         verbalizer = get_manual_verbalizer(args.dataset, class_map.values(), tokenizer)
     elif args.verbalizer == "soft":
         verbalizer = get_soft_verbalizer(class_map.values(), tokenizer, plm)
+    elif args.verbalizer == "avs":
+        verbalizer = get_avs_verbalizer(class_map.values(), tokenizer, plm)
 
     prompt_model = PromptForClassification(
         template=manual_template,
@@ -289,6 +349,8 @@ def main():
         prompt_model = manual_verb_model_training(prompt_model, args, train_dataloader)
     elif args.verbalizer == "soft":
         prompt_model = soft_verb_model_training(prompt_model, args, train_dataloader)
+    elif args.verbalizer == "avs":
+        prompt_model = avs_verb_model_training(prompt_model, args, train_dataloader)
 
     # Evaluate model result
     validation_dataloader = get_dataloader(
