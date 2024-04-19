@@ -317,7 +317,6 @@ def main():
     df_train, df_test = get_data_split(
         raw_data, k_shot=args.k_shot, class_map=class_map
     )
-    df_test = df_test.sample(frac=0.01)
     df_test_raw = df_test  # as a copy for output
 
     printls(f"{df_train.shape=}, {df_test.shape=}")
