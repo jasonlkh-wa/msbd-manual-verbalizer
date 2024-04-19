@@ -37,18 +37,25 @@ def load_args_setup():
     return parser.parse_args()
 
 
-def read_data(name: str) -> pd.DataFrame:
+def read_data(name: str, class_map) -> pd.DataFrame:
     """Return the dataframe for the given dataset name."""
     if name == "twitter-financial-news-topic":
         path = os.path.join(ROOT, "data/twitter-financial-news-topic/data.parquet")
-
-    return pd.read_parquet(path)
+        return pd.read_parquet(path)
+    elif name == "imdb":
+        path = os.path.join(ROOT, "data/imdb/data.parquet")
+        class_map = {v: k for k, v in class_map.items()}
+        df = pd.read_parquet(path)
+        df["label"] = df["label"].map(lambda x: class_map[x])
+        return df
 
 
 def load_class_map(name: str) -> list:
     """Return the class map for the given dataset name."""
     if name == "twitter-financial-news-topic":
         path = os.path.join(ROOT, "data/twitter-financial-news-topic/classes.txt")
+    if name == "imdb":
+        path = os.path.join(ROOT, "data/imdb/classes.txt")
 
     with open(path, "r") as f:
         classes = f.readlines()
@@ -88,6 +95,10 @@ def get_manual_template(name: str, tokenizer) -> ManualTemplate:
     if name == "twitter-financial-news-topic":
         return ManualTemplate(
             text='A {"mask"} news: {"placeholder":"text_a"}', tokenizer=tokenizer
+        )
+    if name == "imdb":
+        return ManualTemplate(
+            text='A {"mask"} review: {"placeholder":"text_a"}', tokenizer=tokenizer
         )
 
 
@@ -297,8 +308,8 @@ def main():
     global ROOT
     ROOT = os.path.dirname(__file__)
 
-    raw_data = read_data(args.dataset)
     class_map = load_class_map(args.dataset)
+    raw_data = read_data(args.dataset, class_map)
     printls(raw_data.head())
     printls("Data shape:\n" + str(raw_data.shape))
 

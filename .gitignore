@@ -1,5 +1,6 @@
 # Custom
 OpenPrompt
+output/
 
 .vscode/*
 .vscode/settings.json
