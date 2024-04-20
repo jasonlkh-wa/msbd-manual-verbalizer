@@ -16,6 +16,13 @@ import torch
 from tqdm import tqdm
 import argparse
 
+if torch.cuda.is_available():
+    DEFAULT_DEVICE = "cuda"
+elif torch.backends.mps.is_available():
+    DEFAULT_DEVICE = "mps"
+else:
+    DEFAULT_DEVICE = "cpu"
+
 
 def load_args_setup():
     parser = argparse.ArgumentParser()
@@ -48,6 +55,12 @@ def read_data(name: str, class_map) -> pd.DataFrame:
         df = pd.read_parquet(path)
         df["label"] = df["label"].map(lambda x: class_map[x])
         return df
+    elif name == "news":
+        path = os.path.join(ROOT, "data/news/data.parquet")
+        class_map = {v: k for k, v in class_map.items()}
+        df = pd.read_parquet(path)
+        df["label"] = df["label"].map(lambda x: class_map[x])
+        return df
 
 
 def load_class_map(name: str) -> list:
@@ -56,6 +69,8 @@ def load_class_map(name: str) -> list:
         path = os.path.join(ROOT, "data/twitter-financial-news-topic/classes.txt")
     if name == "imdb":
         path = os.path.join(ROOT, "data/imdb/classes.txt")
+    if name == "news":
+        path = os.path.join(ROOT, "data/news/classes.txt")
 
     with open(path, "r") as f:
         classes = f.readlines()
@@ -99,6 +114,10 @@ def get_manual_template(name: str, tokenizer) -> ManualTemplate:
     if name == "imdb":
         return ManualTemplate(
             text='A {"mask"} review: {"placeholder":"text_a"}', tokenizer=tokenizer
+        )
+    if name == "news":
+        return ManualTemplate(
+            text='A {"mask"} news: {"placeholder":"text_a"}', tokenizer=tokenizer
         )
 
 
@@ -164,6 +183,7 @@ def get_dataloader(df, template, tokenizer, WrapperClass):
         teacher_forcing=False,
         predict_eos_token=False,
         truncate_method="head",
+        DEFAULT_DEVICE=DEFAULT_DEVICE,
     )
 
 
@@ -196,7 +216,7 @@ def manual_verb_model_training(prompt_model, args, train_dataloader):
         for step, input in enumerate(train_dataloader):
             if torch.cuda.is_available():
                 inputs = inputs.cuda()
-            logits = prompt_model(input)
+            logits = prompt_model(input, DEFAULT_DEVICE=DEFAULT_DEVICE)
             labels = input["label"]
             loss = loss_function(logits, labels)
             loss.backward()
