@@ -42,6 +42,33 @@ def load_args_setup():
     )
 
     return parser.parse_args()
+     
+news_revert_map ={
+    'Art & Design': 'Arts & Culture',
+    'Theater': 'Arts & Culture',
+    'Music': 'Arts & Culture',
+    'Fashion & Style': 'Lifestyle & Wellness',
+    'Well': 'Lifestyle & Wellness',
+    'Food': 'Lifestyle & Wellness',
+    'Science': 'Science & Education',
+    'Education': 'Science & Education',
+    'Books': 'Science & Education',
+    'Television': 'Media & Entertainment',
+    'Dance': 'Media & Entertainment',
+    'Movies': 'Media & Entertainment',
+    'Real Estate': 'Business & Economy',
+    'Economy': 'Business & Economy',
+    'Global Business': 'Business & Economy',
+    'Automobiles': 'Technology & Innovation',
+    'Media': 'Technology & Innovation',
+    'Technology': 'Technology & Innovation',
+    'Style': 'Social & Opinion',
+    'Opinion': 'Social & Opinion',
+    'Your Money': 'Social & Opinion',
+    'Health': 'Sports & Leisure',
+    'Sports': 'Sports & Leisure',
+    'Travel': 'Sports & Leisure'
+}
 
 
 def read_data(name: str, class_map) -> pd.DataFrame:
@@ -59,6 +86,7 @@ def read_data(name: str, class_map) -> pd.DataFrame:
         path = os.path.join(ROOT, "data/news/data.parquet")
         class_map = {v: k for k, v in class_map.items()}
         df = pd.read_parquet(path)
+        df['label'] = df['label'].map(lambda x : news_revert_map[x])
         df["label"] = df["label"].map(lambda x: class_map[x])
         return df
 
@@ -75,8 +103,12 @@ def load_class_map(name: str) -> list:
     with open(path, "r") as f:
         classes = f.readlines()
 
-    return {i: c.strip() for i, c in enumerate(classes)}
-
+    if name == "twitter-financial-news-topic" or name == "imdb":
+        return {i: c.strip() for i, c in enumerate(classes)}
+    elif name =='news':
+        return {i: c.strip() for i, c in enumerate(classes)}
+        
+        
 
 def get_data_split(data, k_shot, class_map) -> tuple:
     """Return the train and test data for the given dataset."""
