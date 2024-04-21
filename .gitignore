@@ -1,6 +1,10 @@
 # Custom
 OpenPrompt
 output/
+data/news/data.parquet
+data/news/train.json
+data/news/test.json
+data/news/dev.json
 
 .vscode/*
 .vscode/settings.json
