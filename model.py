@@ -42,32 +42,33 @@ def load_args_setup():
     )
 
     return parser.parse_args()
-     
-news_revert_map ={
-    'Art & Design': 'Arts & Culture',
-    'Theater': 'Arts & Culture',
-    'Music': 'Arts & Culture',
-    'Fashion & Style': 'Lifestyle & Wellness',
-    'Well': 'Lifestyle & Wellness',
-    'Food': 'Lifestyle & Wellness',
-    'Science': 'Science & Education',
-    'Education': 'Science & Education',
-    'Books': 'Science & Education',
-    'Television': 'Media & Entertainment',
-    'Dance': 'Media & Entertainment',
-    'Movies': 'Media & Entertainment',
-    'Real Estate': 'Business & Economy',
-    'Economy': 'Business & Economy',
-    'Global Business': 'Business & Economy',
-    'Automobiles': 'Technology & Innovation',
-    'Media': 'Technology & Innovation',
-    'Technology': 'Technology & Innovation',
-    'Style': 'Social & Opinion',
-    'Opinion': 'Social & Opinion',
-    'Your Money': 'Social & Opinion',
-    'Health': 'Sports & Leisure',
-    'Sports': 'Sports & Leisure',
-    'Travel': 'Sports & Leisure'
+
+
+news_revert_map = {
+    "Art & Design": "Arts & Culture",
+    "Theater": "Arts & Culture",
+    "Music": "Arts & Culture",
+    "Fashion & Style": "Lifestyle & Wellness",
+    "Well": "Lifestyle & Wellness",
+    "Food": "Lifestyle & Wellness",
+    "Science": "Science & Education",
+    "Education": "Science & Education",
+    "Books": "Science & Education",
+    "Television": "Media & Entertainment",
+    "Dance": "Media & Entertainment",
+    "Movies": "Media & Entertainment",
+    "Real Estate": "Business & Economy",
+    "Economy": "Business & Economy",
+    "Global Business": "Business & Economy",
+    "Automobiles": "Technology & Innovation",
+    "Media": "Technology & Innovation",
+    "Technology": "Technology & Innovation",
+    "Style": "Social & Opinion",
+    "Opinion": "Social & Opinion",
+    "Your Money": "Social & Opinion",
+    "Health": "Sports & Leisure",
+    "Sports": "Sports & Leisure",
+    "Travel": "Sports & Leisure",
 }
 
 
@@ -86,7 +87,7 @@ def read_data(name: str, class_map) -> pd.DataFrame:
         path = os.path.join(ROOT, "data/news/data.parquet")
         class_map = {v: k for k, v in class_map.items()}
         df = pd.read_parquet(path)
-        df['label'] = df['label'].map(lambda x : news_revert_map[x])
+        df["label"] = df["label"].map(lambda x: news_revert_map[x])
         df["label"] = df["label"].map(lambda x: class_map[x])
         return df
 
@@ -105,10 +106,9 @@ def load_class_map(name: str) -> list:
 
     if name == "twitter-financial-news-topic" or name == "imdb":
         return {i: c.strip() for i, c in enumerate(classes)}
-    elif name =='news':
+    elif name == "news":
         return {i: c.strip() for i, c in enumerate(classes)}
-        
-        
+
 
 def get_data_split(data, k_shot, class_map) -> tuple:
     """Return the train and test data for the given dataset."""
@@ -312,8 +312,13 @@ def soft_verb_model_training(prompt_model, args, train_dataloader):
     return prompt_model
 
 
-def avs_verb_model_training(prompt_model, args, train_dataloader):
+def avs_verb_model_training(verbalizer, prompt_model, args, train_dataloader):
     # Training
+    with torch.no_grad():
+        for batch in tqdm(train_dataloader, desc="Init_using_{}".format("train")):
+            batch = batch.cuda()
+            logits = prompt_model(batch)
+        verbalizer.optimize_to_initialize()
     loss_func = torch.nn.CrossEntropyLoss()
 
     no_decay = ["bias", "LayerNorm.weight"]
@@ -412,7 +417,9 @@ def main():
     elif args.verbalizer == "soft":
         prompt_model = soft_verb_model_training(prompt_model, args, train_dataloader)
     elif args.verbalizer == "avs":
-        prompt_model = avs_verb_model_training(prompt_model, args, train_dataloader)
+        prompt_model = avs_verb_model_training(
+            verbalizer,prompt_model, args, train_dataloader
+        )
 
     # Evaluate model result
     validation_dataloader = get_dataloader(
